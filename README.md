@@ -44,7 +44,7 @@ A full-stack application combining a Next.js frontend with a Python backend powe
 ### 1. Clone the Repository
 ```bash
 git clone <repository-url>
-cd myfrontend
+cd MentalHealth
 ```
 
 ### 2. Install Frontend Dependencies
@@ -85,7 +85,7 @@ If Ollama is not running:
 Open a new terminal and run:
 ```bash
 # Make sure you're in the project directory
-cd myfrontend
+cd MentalHealth
 
 # Activate the virtual environment if not already activated
 # On Windows:
@@ -94,7 +94,7 @@ venv\Scripts\activate
 source venv/bin/activate
 
 # Start the FastAPI server
-python ai3.py --mode api
+python app.py --mode api
 ```
 You should see output indicating the server is running on port 8501.
 
@@ -102,7 +102,7 @@ You should see output indicating the server is running on port 8501.
 Open another terminal and run:
 ```bash
 # Make sure you're in the project directory
-cd myfrontend
+cd MentalHealth
 
 # Start the Next.js development server
 npm run dev
@@ -154,7 +154,7 @@ The frontend should be available at http://localhost:3000 (or http://localhost:3
 
 2. **Port Conflicts**
    - If port 3000 is in use, the frontend will automatically use port 3001
-   - If port 8501 is in use, you can modify the port in `ai3.py`
+   - If port 8501 is in use, you can modify the port in `app.py`
 
 3. **Python Dependencies**
    - If you get module not found errors, make sure you've activated the virtual environment
