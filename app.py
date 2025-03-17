@@ -17,9 +17,20 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from pydantic import BaseModel
+from contextlib import asynccontextmanager
 
-# Create FastAPI app
-app = FastAPI()
+# Create FastAPI app with lifespan
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    global chat_client
+    chat_client = ChatClient(model="llama3.1:8b")
+    yield
+    # Shutdown
+    if chat_client:
+        chat_client = None
+
+app = FastAPI(lifespan=lifespan)
 
 # Add CORS middleware
 app.add_middleware(
@@ -36,11 +47,6 @@ class ChatRequest(BaseModel):
 
 # Create a global chat client
 chat_client = None
-
-@app.on_event("startup")
-async def startup_event():
-    global chat_client
-    chat_client = ChatClient(model="llama3.1:8b")
 
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
