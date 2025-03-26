@@ -1,4 +1,4 @@
-import streamlit as st
+
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 from collections import deque
@@ -44,6 +44,7 @@ app.add_middleware(
 # Create a Pydantic model for the chat request
 class ChatRequest(BaseModel):
     message: str
+    persona: str = "Arjun (Empathetic Counselor)"  # Default persona
 
 # Create a global chat client
 chat_client = None
@@ -51,28 +52,29 @@ chat_client = None
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
     try:
-        print(f"Received chat request: {request.message}")
+        print(f"Received chat request: {request.message} with persona: {request.persona}")
+        
+        # Update system message based on persona
+        if request.persona in WAIFU_PERSONAS:
+            chat_client.system_message = WAIFU_PERSONAS[request.persona]["prompt"]
+            print(f"Updated system message for persona: {request.persona}")
         
         # Get response from chat client
-        response = chat_client.create_chat_completion(request.message)
-        print(f"Generated response: {response}")
-        
-        # Generate TTS if available
-        audio_file = None
         try:
-            if hasattr(chat_client, 'tts'):
-                audio_file = await chat_client.generate_tts(response)
-                print(f"Generated audio file: {audio_file}")
-        except Exception as tts_error:
-            print(f"TTS generation failed (non-critical): {str(tts_error)}")
-            # Continue without audio - this is not a critical error
+            response = chat_client.create_chat_completion(request.message)
+            print(f"Generated response: {response}")
+        except Exception as chat_error:
+            print(f"Error in chat completion: {str(chat_error)}")
+            return {"error": f"Chat completion error: {str(chat_error)}"}, 500
         
         return {
-            "response": response,
-            "audio": audio_file if audio_file else None
+            "response": response
         }
     except Exception as e:
         print(f"Error in chat endpoint: {str(e)}")
+        print(f"Error type: {type(e).__name__}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
         return {"error": str(e)}, 500
 
 # Model configuration
