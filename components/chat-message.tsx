@@ -1,15 +1,29 @@
-import type React from "react"
-import { User, Bot } from "lucide-react"
+import React, { useState } from "react"
+import { User, Bot, Play, Pause } from "lucide-react"
 
 interface ChatMessageProps {
   message: {
     role: "user" | "assistant"
     content: string
+    audio?: string
   }
 }
 
 const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
   const isUser = message.role === "user"
+  const [isPlaying, setIsPlaying] = useState(false)
+  const audioRef = React.useRef<HTMLAudioElement | null>(null)
+
+  const togglePlayback = () => {
+    if (audioRef.current) {
+      if (isPlaying) {
+        audioRef.current.pause()
+      } else {
+        audioRef.current.play()
+      }
+      setIsPlaying(!isPlaying)
+    }
+  }
 
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"} group`}>
@@ -31,6 +45,23 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
           } group-hover:shadow-md`}
         >
           <p className="text-sm md:text-base whitespace-pre-wrap leading-relaxed">{message.content}</p>
+          {message.audio && (
+            <div className="mt-2 flex items-center space-x-2">
+              <button
+                onClick={togglePlayback}
+                className="p-1 rounded-full hover:bg-purple-100 dark:hover:bg-purple-900 transition-colors"
+                aria-label={isPlaying ? "Pause audio" : "Play audio"}
+              >
+                {isPlaying ? <Pause size={16} /> : <Play size={16} />}
+              </button>
+              <audio
+                ref={audioRef}
+                src={message.audio}
+                onEnded={() => setIsPlaying(false)}
+                className="hidden"
+              />
+            </div>
+          )}
         </div>
       </div>
     </div>

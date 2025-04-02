@@ -9,16 +9,27 @@ import ThemeToggle from "@/components/theme-toggle"
 import Sidebar from "@/components/sidebar"
 import DecorativeBlob from "@/components/decorative-blob"
 
+const PERSONAS = [
+  "Arjun (Empathetic Counselor)",
+  "Anjali (Mindful Guide)",
+  "Rohan (Insightful Therapist)",
+  "Priya (Caring Mentor)"
+]
+
+// API endpoint configuration
+const API_URL = "http://localhost:8501"
+
 export default function Home() {
-  const [messages, setMessages] = useState<Array<{ role: "user" | "assistant"; content: string; audio?: string }>>([
+  const [messages, setMessages] = useState<Array<{ role: "user" | "assistant"; content: string }>>([
     { role: "assistant", content: "Hello! I'm here to support your mental wellbeing. How are you feeling today?" },
   ])
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [isDarkMode, setIsDarkMode] = useState(true)
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
-  const audioRef = useRef<HTMLAudioElement>(null)
+  const [selectedPersona, setSelectedPersona] = useState(PERSONAS[0])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -36,43 +47,66 @@ export default function Home() {
     setMessages((prev) => [...prev, userMessage])
     setInput("")
     setIsLoading(true)
+    setError(null)
 
     try {
-      const response = await fetch("/api/chat", {
+      console.log("Sending request to:", `${API_URL}/chat`)
+      console.log("Request payload:", { message: input, persona: selectedPersona })
+      
+      const response = await fetch(`${API_URL}/chat`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ message: input }),
+        body: JSON.stringify({ 
+          message: input,
+          persona: selectedPersona
+        }),
       })
 
+      console.log("Response status:", response.status)
+
       if (!response.ok) {
-        throw new Error('Failed to get response')
+        const errorData = await response.json()
+        console.error("Error response:", errorData)
+        throw new Error(errorData.error || `Server error: ${response.status}`)
       }
 
       const data = await response.json()
+      console.log("Received response data:", data)
       
       if (data.error) {
+        console.error("Error in response data:", data.error)
         throw new Error(data.error)
       }
 
-      setMessages((prev) => [...prev, { 
-        role: "assistant", 
-        content: data.response,
-        audio: data.audio
-      }])
-
-      // Play audio if available
-      if (data.audio && audioRef.current) {
-        audioRef.current.src = data.audio
-        audioRef.current.play().catch(console.error)
+      if (!data.response) {
+        console.error("No response in data:", data)
+        throw new Error("No response received from server")
       }
+
+      console.log("Adding assistant message to state:", { 
+        role: "assistant" as const, 
+        content: data.response
+      })
+
+      // Add assistant message with response
+      setMessages((prev) => {
+        const newMessages = [...prev, { 
+          role: "assistant" as const, 
+          content: data.response
+        }]
+        console.log("Updated messages state:", newMessages)
+        return newMessages
+      })
+
     } catch (error) {
-      console.error("Error:", error)
+      console.error("Detailed error:", error)
+      setError(error instanceof Error ? error.message : "An error occurred")
       setMessages((prev) => [
         ...prev,
         { 
-          role: "assistant", 
+          role: "assistant" as const, 
           content: "I apologize, but I encountered an error. Please try again later." 
         },
       ])
@@ -89,8 +123,22 @@ export default function Home() {
     setIsSidebarOpen(!isSidebarOpen)
   }
 
+  const handlePersonaChange = (persona: string) => {
+    setSelectedPersona(persona)
+    // Clear chat history when changing persona
+    setMessages([{ 
+      role: "assistant" as const, 
+      content: `Hello! I'm ${persona.split(' ')[0]}, and I'm here to support your mental wellbeing. How are you feeling today?` 
+    }])
+  }
+
   return (
     <div className={isDarkMode ? "dark" : ""}>
+      {/* Disclaimer Banner */}
+      <div className="bg-yellow-50 dark:bg-yellow-900/50 border-b border-yellow-200 dark:border-yellow-800 p-2 text-center text-sm text-yellow-800 dark:text-yellow-200">
+        This is an AI-powered mental health support system. For immediate help, please contact emergency services or a mental health professional.
+      </div>
+
       <div className="flex h-screen overflow-hidden bg-gradient-to-br from-gray-50 to-purple-50 dark:from-gray-900 dark:to-purple-950 transition-colors duration-300">
         {/* Decorative elements */}
         <div className="fixed inset-0 pointer-events-none">
@@ -99,7 +147,12 @@ export default function Home() {
         </div>
 
         {/* Sidebar */}
-        <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
+        <Sidebar 
+          isOpen={isSidebarOpen} 
+          onClose={() => setIsSidebarOpen(false)}
+          selectedPersona={selectedPersona}
+          onPersonaChange={handlePersonaChange}
+        />
 
         {/* Main content */}
         <main className="flex flex-col flex-1 min-w-0">
@@ -108,16 +161,16 @@ export default function Home() {
             <div className="flex items-center">
               <button
                 onClick={toggleSidebar}
-                className="mr-3 p-2 rounded-full hover:bg-purple-100 dark:hover:bg-purple-900 transition-colors flex items-center justify-center"
+                className="mr-3 p-2 rounded-full hover:bg-purple-100 dark:hover:bg-purple-900 transition-colors flex items-center justify-center text-gray-800 dark:text-gray-100"
                 aria-label="Toggle sidebar"
               >
                 {isSidebarOpen ? <X size={20} /> : <Menu size={20} />}
               </button>
               <div className="flex items-center">
                 <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-400 to-purple-600 flex items-center justify-center mr-2">
-                  <span className="text-white font-bold">M</span>
+                  <span className="text-white font-bold">V</span>
                 </div>
-                <h1 className="text-xl font-semibold text-gray-800 dark:text-gray-100">Mindful</h1>
+                <h1 className="text-xl font-semibold text-gray-800 dark:text-white">Vista</h1>
               </div>
             </div>
             <ThemeToggle isDarkMode={isDarkMode} toggleTheme={toggleTheme} />
@@ -129,18 +182,18 @@ export default function Home() {
               {messages.map((message, index) => (
                 <div key={index}>
                   <ChatMessage message={message} />
-                  {message.audio && (
-                    <div className="mt-2 flex justify-end">
-                      <audio controls src={message.audio} className="max-w-[200px]" />
-                    </div>
-                  )}
                 </div>
               ))}
               {isLoading && (
-                <div className="flex items-center space-x-2 text-sm text-gray-500 dark:text-gray-400 p-3 max-w-[80%] rounded-lg bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border border-purple-100 dark:border-purple-900">
+                <div className="flex items-center space-x-2 text-sm text-gray-500 dark:text-gray-300 p-3 max-w-[80%] rounded-lg bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border border-purple-100 dark:border-purple-900">
                   <div className="h-2 w-2 rounded-full bg-purple-600 animate-pulse"></div>
                   <div className="h-2 w-2 rounded-full bg-purple-600 animate-pulse delay-150"></div>
                   <div className="h-2 w-2 rounded-full bg-purple-600 animate-pulse delay-300"></div>
+                </div>
+              )}
+              {error && (
+                <div className="text-red-500 dark:text-red-300 text-sm p-3 max-w-[80%] rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
+                  {error}
                 </div>
               )}
               <div ref={messagesEndRef} />
@@ -155,7 +208,7 @@ export default function Home() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="Type your message here..."
-                className="flex-1 p-4 pr-14 rounded-2xl border border-purple-200 dark:border-purple-800 focus:outline-none focus:ring-2 focus:ring-purple-500 dark:bg-gray-700/80 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 shadow-sm"
+                className="flex-1 p-4 pr-14 rounded-2xl border border-purple-200 dark:border-purple-800 focus:outline-none focus:ring-2 focus:ring-purple-500 dark:bg-gray-700/80 dark:text-white placeholder-gray-400 dark:placeholder-gray-400 shadow-sm"
                 disabled={isLoading}
               />
               <button
@@ -167,13 +220,12 @@ export default function Home() {
                 <Send size={18} />
               </button>
             </form>
-            <div className="max-w-3xl mx-auto mt-2 text-xs text-center text-gray-400 dark:text-gray-500">
+            <div className="max-w-3xl mx-auto mt-2 text-xs text-center text-gray-400 dark:text-gray-300">
               Your conversations are private and secure
             </div>
           </div>
         </main>
       </div>
-      <audio ref={audioRef} className="hidden" />
     </div>
   )
 }
