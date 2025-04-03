@@ -1,4 +1,4 @@
-
+import streamlit as st
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 from collections import deque
@@ -18,6 +18,8 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
+from fastapi.responses import FileResponse, Response
+import tempfile
 
 # Create FastAPI app with lifespan
 @asynccontextmanager
@@ -28,6 +30,8 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown
     if chat_client:
+        if chat_client.tts:
+            chat_client.tts.cleanup()
         chat_client = None
 
 app = FastAPI(lifespan=lifespan)
@@ -35,11 +39,21 @@ app = FastAPI(lifespan=lifespan)
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with your frontend domain
+    allow_origins=["http://localhost:3000"],  # Allow frontend origin
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add root endpoint
+@app.get("/")
+async def root():
+    return {"message": "Vista Mental Health API is running"}
+
+# Add health check endpoint
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
 
 # Create a Pydantic model for the chat request
 class ChatRequest(BaseModel):
@@ -75,6 +89,85 @@ async def chat_endpoint(request: ChatRequest):
         print(f"Error type: {type(e).__name__}")
         import traceback
         print(f"Traceback: {traceback.format_exc()}")
+        return {"error": str(e)}, 500
+
+@app.post("/tts")
+async def text_to_speech(request: Request):
+    try:
+        data = await request.json()
+        text = data.get("text")
+        persona = data.get("persona", "Arjun (Empathetic Counselor)")
+
+        if not text:
+            return {"error": "No text provided"}, 400
+
+        # Generate speech using Piper
+        try:
+            # Initialize Piper if not already initialized
+            if not chat_client.tts.initialized:
+                success = await chat_client.tts.initialize()
+                if not success:
+                    return {"error": "Failed to initialize TTS"}, 500
+
+            # Generate speech
+            wav_file = await chat_client.tts.generate_speech(text)
+            
+            if not wav_file or not os.path.exists(wav_file):
+                return {"error": "Failed to generate speech"}, 500
+
+            # Convert WAV to MP3 using ffmpeg
+            mp3_file = wav_file.replace('.wav', '.mp3')
+            try:
+                subprocess.run([
+                    'ffmpeg',
+                    '-i', wav_file,
+                    '-acodec', 'libmp3lame',
+                    '-ab', '128k',
+                    '-ar', '44100',  # Set sample rate
+                    '-ac', '1',      # Set to mono
+                    mp3_file
+                ], check=True)
+            except subprocess.CalledProcessError as e:
+                print(f"Error converting to MP3: {e}")
+                return {"error": "Failed to convert audio format"}, 500
+
+            # Clean up the WAV file
+            try:
+                os.remove(wav_file)
+            except:
+                pass
+
+            if not os.path.exists(mp3_file):
+                return {"error": "Failed to generate audio file"}, 500
+
+            # Read the MP3 file
+            with open(mp3_file, 'rb') as f:
+                audio_data = f.read()
+
+            # Clean up the MP3 file
+            try:
+                os.remove(mp3_file)
+            except:
+                pass
+
+            # Return the audio data with proper headers
+            return Response(
+                content=audio_data,
+                media_type="audio/mpeg",
+                headers={
+                    "Content-Type": "audio/mpeg",
+                    "Content-Length": str(len(audio_data)),
+                    "Accept-Ranges": "bytes",
+                    "Cache-Control": "no-cache"
+                }
+            )
+
+        except Exception as e:
+            print(f"TTS error: {str(e)}")
+            return {"error": f"TTS error: {str(e)}"}, 500
+
+    except Exception as e:
+        print(f"Error in TTS endpoint: {str(e)}")
         return {"error": str(e)}, 500
 
 # Model configuration
@@ -310,52 +403,91 @@ class PiperTTS:
         print(f"Initialized PiperTTS with output directory: {self.output_dir.absolute()}")
 
     async def initialize(self):
-        if not self.initialized:
-            try:
-                piper_path = Path('piper/piper.exe')
-                if not piper_path.exists():
-                    print(f"Warning: Piper executable not found at {piper_path}")
-                    return False
-                    
-                self.process = subprocess.Popen(
-                    [
-                        str(piper_path),
-                        '-m', 'piper/en_US-hfc_female-medium.onnx',
-                        '-c', 'piper/en_en_US_hfc_female_medium_en_US-hfc_female-medium.onnx.json',
-                        '--json-input'
-                    ],
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True
-                )
-                self.initialized = True
-                print('Piper initialized successfully')
-                return True
-            except Exception as e:
-                print('Piper initialization failed:', e)
+        try:
+            # Clean up any existing process
+            if self.process:
+                try:
+                    self.process.terminate()
+                    self.process.wait(timeout=5)
+                except:
+                    self.process.kill()
+                self.process = None
+
+            piper_path = Path('piper/piper.exe')
+            if not piper_path.exists():
+                print(f"Warning: Piper executable not found at {piper_path}")
                 return False
+                
+            self.process = subprocess.Popen(
+                [
+                    str(piper_path),
+                    '-m', 'piper/en_US-hfc_female-medium.onnx',
+                    '-c', 'piper/en_en_US_hfc_female_medium_en_US-hfc_female-medium.onnx.json',
+                    '--json-input'
+                ],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            self.initialized = True
+            print('Piper initialized successfully')
+            return True
+        except Exception as e:
+            print('Piper initialization failed:', e)
+            self.initialized = False
+            return False
 
     async def generate_speech(self, text: str):
-        if not self.initialized:
-            success = await self.initialize()
-            if not success:
-                print("Skipping TTS generation - Piper not available")
-                return None
-
         try:
+            if not self.initialized:
+                success = await self.initialize()
+                if not success:
+                    print("Failed to initialize Piper")
+                    return None
+
+            # Check if process is still running
+            if self.process.poll() is not None:
+                print("Piper process died, reinitializing...")
+                success = await self.initialize()
+                if not success:
+                    return None
+
             output_file = str(self.output_dir / f'output_{int(time.time() * 1000)}.wav')
             input_json = {'text': text, 'output_file': output_file}
+            
+            # Write to stdin and flush
             self.process.stdin.write(json.dumps(input_json) + '\n')
             self.process.stdin.flush()
             
-            while True:
+            # Read output with timeout
+            start_time = time.time()
+            while time.time() - start_time < 30:  # 30 second timeout
                 line = self.process.stdout.readline().strip()
                 if line.endswith('.wav'):
                     return line
+                if not line:
+                    break
+                time.sleep(0.1)
+            
+            print("Timeout waiting for Piper response")
+            return None
+
         except Exception as e:
             print('Piper error:', e)
+            self.initialized = False
             return None
+
+    def cleanup(self):
+        """Clean up the Piper process"""
+        if self.process:
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=5)
+            except:
+                self.process.kill()
+            self.process = None
+        self.initialized = False
 
 class AudioProcessor:
     @staticmethod

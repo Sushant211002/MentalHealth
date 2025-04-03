@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useState, useRef, useEffect } from "react"
-import { Send, Menu, X } from "lucide-react"
+import { Send, Menu, X, Volume2, VolumeX } from "lucide-react"
 import ChatMessage from "@/components/chat-message"
 import ThemeToggle from "@/components/theme-toggle"
 import Sidebar from "@/components/sidebar"
@@ -19,10 +19,25 @@ const PERSONAS = [
 // API endpoint configuration
 const API_URL = "http://localhost:8501"
 
+interface ChatMessage {
+  role: "user" | "assistant"
+  content: string
+  timestamp: number
+  audioUrl?: string
+  id: string
+}
+
+interface ChatHistory {
+  id: string
+  title: string
+  messages: ChatMessage[]
+  persona: string
+  createdAt: number
+  updatedAt: number
+}
+
 export default function Home() {
-  const [messages, setMessages] = useState<Array<{ role: "user" | "assistant"; content: string }>>([
-    { role: "assistant", content: "Hello! I'm here to support your mental wellbeing. How are you feeling today?" },
-  ])
+  const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -30,6 +45,36 @@ export default function Home() {
   const [isDarkMode, setIsDarkMode] = useState(true)
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [selectedPersona, setSelectedPersona] = useState(PERSONAS[0])
+  const [chatHistories, setChatHistories] = useState<ChatHistory[]>([])
+  const [currentChatId, setCurrentChatId] = useState<string | null>(null)
+  const [isTTSEnabled, setIsTTSEnabled] = useState(true)
+  const [currentlyPlayingMessage, setCurrentlyPlayingMessage] = useState<ChatMessage | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+
+  // Load chat histories from localStorage on component mount
+  useEffect(() => {
+    const savedHistories = localStorage.getItem('chatHistories')
+    if (savedHistories) {
+      setChatHistories(JSON.parse(savedHistories))
+    }
+  }, [])
+
+  // Save chat histories to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem('chatHistories', JSON.stringify(chatHistories))
+  }, [chatHistories])
+
+  // Initialize first message if no messages exist
+  useEffect(() => {
+    if (messages.length === 0) {
+      setMessages([{
+        role: "assistant",
+        content: "Hello! I'm here to support your mental wellbeing. How are you feeling today?",
+        timestamp: Date.now(),
+        id: `msg-${Date.now()}`
+      }])
+    }
+  }, [])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -39,19 +84,75 @@ export default function Home() {
     scrollToBottom()
   }, [messages, messagesEndRef])
 
+  const createNewChat = () => {
+    const newChat: ChatHistory = {
+      id: Date.now().toString(),
+      title: "New Chat",
+      messages: [{
+        role: "assistant",
+        content: `Hello! I'm ${selectedPersona.split(' ')[0]}, and I'm here to support your mental wellbeing. How are you feeling today?`,
+        timestamp: Date.now(),
+        id: `msg-${Date.now()}`
+      }],
+      persona: selectedPersona,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    }
+    setChatHistories(prev => [...prev, newChat])
+    setCurrentChatId(newChat.id)
+    setMessages(newChat.messages)
+  }
+
+  const loadChat = (chatId: string) => {
+    console.log("Loading chat:", chatId)
+    const chat = chatHistories.find(h => h.id === chatId)
+    if (chat) {
+      console.log("Found chat:", chat)
+      setCurrentChatId(chat.id)
+      setMessages(chat.messages)
+      setSelectedPersona(chat.persona)
+      setTimeout(() => {
+        scrollToBottom()
+      }, 0)
+    } else {
+      console.error("Chat not found:", chatId)
+    }
+  }
+
+  const updateChatTitle = (chatId: string, title: string) => {
+    setChatHistories(prev => prev.map(chat => 
+      chat.id === chatId 
+        ? { ...chat, title, updatedAt: Date.now() }
+        : chat
+    ))
+  }
+
+  const deleteChat = (chatId: string) => {
+    setChatHistories(prev => prev.filter(chat => chat.id !== chatId))
+    if (currentChatId === chatId) {
+      createNewChat()
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (input.trim() === "") return
+    if (!input.trim() || isLoading) return
 
-    const userMessage = { role: "user" as const, content: input }
-    setMessages((prev) => [...prev, userMessage])
+    const userMessage: ChatMessage = {
+      role: 'user',
+      content: input.trim(),
+      timestamp: Date.now(),
+      id: `msg-${Date.now()}`
+    }
+    
+    setMessages(prev => [...prev, userMessage])
     setInput("")
     setIsLoading(true)
     setError(null)
 
     try {
       console.log("Sending request to:", `${API_URL}/chat`)
-      console.log("Request payload:", { message: input, persona: selectedPersona })
+      console.log("Request payload:", { message: input.trim(), persona: selectedPersona })
       
       const response = await fetch(`${API_URL}/chat`, {
         method: "POST",
@@ -59,7 +160,7 @@ export default function Home() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ 
-          message: input,
+          message: input.trim(),
           persona: selectedPersona
         }),
       })
@@ -85,31 +186,41 @@ export default function Home() {
         throw new Error("No response received from server")
       }
 
-      console.log("Adding assistant message to state:", { 
-        role: "assistant" as const, 
-        content: data.response
-      })
+      const assistantMessage: ChatMessage = {
+        role: "assistant",
+        content: data.response,
+        timestamp: Date.now(),
+        id: `msg-${Date.now()}`
+      }
 
-      // Add assistant message with response
-      setMessages((prev) => {
-        const newMessages = [...prev, { 
-          role: "assistant" as const, 
-          content: data.response
-        }]
-        console.log("Updated messages state:", newMessages)
+      // Update messages and chat history
+      setMessages(prev => {
+        const newMessages = [...prev, assistantMessage]
+        if (currentChatId) {
+          setChatHistories(prev => prev.map(chat => 
+            chat.id === currentChatId
+              ? { 
+                  ...chat, 
+                  messages: newMessages,
+                  updatedAt: Date.now(),
+                  title: chat.title === "New Chat" ? input.slice(0, 30) + (input.length > 30 ? "..." : "") : chat.title
+                }
+              : chat
+          ))
+        }
         return newMessages
       })
 
     } catch (error) {
       console.error("Detailed error:", error)
       setError(error instanceof Error ? error.message : "An error occurred")
-      setMessages((prev) => [
-        ...prev,
-        { 
-          role: "assistant" as const, 
-          content: "I apologize, but I encountered an error. Please try again later." 
-        },
-      ])
+      const errorMessage: ChatMessage = {
+        role: "assistant",
+        content: "I apologize, but I encountered an error. Please try again later.",
+        timestamp: Date.now(),
+        id: `msg-${Date.now()}`
+      }
+      setMessages(prev => [...prev, errorMessage])
     } finally {
       setIsLoading(false)
     }
@@ -125,12 +236,153 @@ export default function Home() {
 
   const handlePersonaChange = (persona: string) => {
     setSelectedPersona(persona)
-    // Clear chat history when changing persona
-    setMessages([{ 
-      role: "assistant" as const, 
-      content: `Hello! I'm ${persona.split(' ')[0]}, and I'm here to support your mental wellbeing. How are you feeling today?` 
-    }])
+    createNewChat()
   }
+
+  const toggleTTS = () => {
+    setIsTTSEnabled(!isTTSEnabled)
+    if (!isTTSEnabled && currentlyPlayingMessage) {
+      audioRef.current?.play()
+    } else if (isTTSEnabled && currentlyPlayingMessage) {
+      audioRef.current?.pause()
+    }
+  }
+
+  const handleTTSPlayback = async (message: ChatMessage) => {
+    try {
+      console.log('Starting TTS playback for message:', message.id);
+      
+      // Stop currently playing message if any
+      if (currentlyPlayingMessage && currentlyPlayingMessage !== message) {
+        const audio = document.getElementById(`audio-${currentlyPlayingMessage.id}`) as HTMLAudioElement;
+        if (audio) {
+          audio.pause();
+          audio.currentTime = 0;
+        }
+      }
+
+      // If clicking the same message that's currently playing, toggle play/pause
+      if (currentlyPlayingMessage === message) {
+        const audio = document.getElementById(`audio-${message.id}`) as HTMLAudioElement;
+        if (audio) {
+          if (audio.paused) {
+            audio.play();
+          } else {
+            audio.pause();
+          }
+          return;
+        }
+      }
+
+      // Generate new audio
+      console.log('Fetching TTS from:', `${API_URL}/tts`);
+      const response = await fetch(`${API_URL}/tts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          text: message.content,
+          persona: selectedPersona
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('TTS response not OK:', response.status, errorText);
+        throw new Error(`Failed to generate speech: ${response.status} ${errorText}`);
+      }
+
+      // Get the response as a blob
+      const blob = await response.blob();
+      console.log('Received blob:', blob.type, blob.size);
+      
+      if (blob.size === 0) {
+        throw new Error('Received empty audio data');
+      }
+
+      // Create an object URL from the Blob
+      const audioUrl = URL.createObjectURL(blob);
+      console.log('Created audio URL:', audioUrl);
+
+      // Update the audio source
+      const audio = document.getElementById(`audio-${message.id}`) as HTMLAudioElement;
+      if (!audio) {
+        console.error('Audio element not found:', `audio-${message.id}`);
+        throw new Error('Audio element not found');
+      }
+
+      // Revoke the old object URL if it exists
+      if (audio.src) {
+        URL.revokeObjectURL(audio.src);
+      }
+
+      // Set up audio event listeners
+      audio.onerror = (e) => {
+        console.error('Audio playback error:', e);
+        URL.revokeObjectURL(audioUrl);
+        setCurrentlyPlayingMessage(null);
+      };
+
+      audio.oncanplaythrough = () => {
+        console.log('Audio can play through');
+      };
+
+      audio.onloadeddata = () => {
+        console.log('Audio data loaded');
+      };
+
+      audio.onloadstart = () => {
+        console.log('Audio loading started');
+      };
+
+      audio.onloadedmetadata = () => {
+        console.log('Audio metadata loaded');
+      };
+
+      audio.src = audioUrl;
+      console.log('Set audio source, attempting to play');
+      
+      try {
+        const playPromise = audio.play();
+        if (playPromise !== undefined) {
+          await playPromise;
+        }
+        console.log('Audio playback started');
+        setCurrentlyPlayingMessage(message);
+      } catch (playError) {
+        console.error('Error playing audio:', playError);
+        URL.revokeObjectURL(audioUrl);
+        throw playError;
+      }
+    } catch (error) {
+      console.error('TTS error:', error);
+      setCurrentlyPlayingMessage(null);
+      // Don't show error to user, just log it
+    }
+  };
+
+  // Clean up object URLs when component unmounts
+  useEffect(() => {
+    return () => {
+      // Clean up any existing audio object URLs
+      messages.forEach(message => {
+        const audio = document.getElementById(`audio-${message.id}`) as HTMLAudioElement;
+        if (audio && audio.src) {
+          URL.revokeObjectURL(audio.src);
+        }
+      });
+    };
+  }, [messages]);
+
+  // Handle audio ended
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.onended = () => {
+        setCurrentlyPlayingMessage(null)
+      }
+    }
+  }, [])
 
   return (
     <div className={isDarkMode ? "dark" : ""}>
@@ -152,6 +404,13 @@ export default function Home() {
           onClose={() => setIsSidebarOpen(false)}
           selectedPersona={selectedPersona}
           onPersonaChange={handlePersonaChange}
+          isDarkMode={isDarkMode}
+          toggleTheme={toggleTheme}
+          chatHistories={chatHistories}
+          currentChatId={currentChatId}
+          onLoadChat={loadChat}
+          onCreateNewChat={createNewChat}
+          onDeleteChat={deleteChat}
         />
 
         {/* Main content */}
@@ -161,10 +420,10 @@ export default function Home() {
             <div className="flex items-center">
               <button
                 onClick={toggleSidebar}
-                className="mr-3 p-2 rounded-full hover:bg-purple-100 dark:hover:bg-purple-900 transition-colors flex items-center justify-center text-gray-800 dark:text-gray-100"
+                className="mr-3 p-2 rounded-full hover:bg-purple-100 dark:hover:bg-purple-900 transition-colors flex items-center justify-center"
                 aria-label="Toggle sidebar"
               >
-                {isSidebarOpen ? <X size={20} /> : <Menu size={20} />}
+                {isSidebarOpen ? <X size={20} className="text-gray-800 dark:text-gray-100" /> : <Menu size={20} className="text-gray-800 dark:text-gray-100" />}
               </button>
               <div className="flex items-center">
                 <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-400 to-purple-600 flex items-center justify-center mr-2">
@@ -173,7 +432,20 @@ export default function Home() {
                 <h1 className="text-xl font-semibold text-gray-800 dark:text-white">Vista</h1>
               </div>
             </div>
-            <ThemeToggle isDarkMode={isDarkMode} toggleTheme={toggleTheme} />
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={toggleTTS}
+                className="p-2 rounded-full hover:bg-purple-100 dark:hover:bg-purple-900 transition-colors"
+                aria-label="Toggle TTS"
+              >
+                {isTTSEnabled ? (
+                  <Volume2 size={20} className="text-purple-600 dark:text-purple-400" />
+                ) : (
+                  <VolumeX size={20} className="text-gray-400 dark:text-gray-500" />
+                )}
+              </button>
+              <ThemeToggle isDarkMode={isDarkMode} toggleTheme={toggleTheme} />
+            </div>
           </header>
 
           {/* Chat container */}
@@ -181,7 +453,25 @@ export default function Home() {
             <div className="max-w-3xl mx-auto space-y-6">
               {messages.map((message, index) => (
                 <div key={index}>
-                  <ChatMessage message={message} />
+                  <ChatMessage 
+                    message={message} 
+                    onPlayTTS={handleTTSPlayback}
+                    isCurrentlyPlaying={currentlyPlayingMessage?.id === message.id}
+                  />
+                  <audio
+                    id={`audio-${message.id}`}
+                    className="hidden"
+                    controls
+                    onEnded={() => setCurrentlyPlayingMessage(null)}
+                    preload="auto"
+                    onError={(e) => {
+                      console.error('Audio error:', e);
+                      setCurrentlyPlayingMessage(null);
+                    }}
+                    onLoadedData={() => console.log(`Audio loaded for message ${message.id}`)}
+                    onLoadStart={() => console.log(`Audio loading started for message ${message.id}`)}
+                    onLoadedMetadata={() => console.log(`Audio metadata loaded for message ${message.id}`)}
+                  />
                 </div>
               ))}
               {isLoading && (
@@ -226,6 +516,9 @@ export default function Home() {
           </div>
         </main>
       </div>
+
+      {/* Add audio element */}
+      <audio ref={audioRef} className="hidden" />
     </div>
   )
 }
