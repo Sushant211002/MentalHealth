@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
+from fastapi.staticfiles import StaticFiles
 
 # Create FastAPI app with lifespan
 @asynccontextmanager
@@ -303,8 +304,8 @@ class PiperTTS:
     def __init__(self):
         self.process = None
         self.initialized = False
-        self.output_dir = Path('output')
-        self.output_dir.mkdir(exist_ok=True)
+        self.output_dir = Path('static/output')
+        self.output_dir.mkdir(parents=True,exist_ok=True)
         print(f"Initialized PiperTTS with output directory: {self.output_dir.absolute()}")
 
     async def initialize(self):
@@ -335,6 +336,7 @@ class PiperTTS:
                 return False
 
     async def generate_speech(self, text: str):
+        # Line A: Ensure PiperTTS is initialized.
         if not self.initialized:
             success = await self.initialize()
             if not success:
@@ -342,18 +344,40 @@ class PiperTTS:
                 return None
 
         try:
+            # Line B: Create a unique output filename.
             output_file = str(self.output_dir / f'output_{int(time.time() * 1000)}.wav')
-            input_json = {'text': text, 'output_file': output_file}
-            self.process.stdin.write(json.dumps(input_json) + '\n')
-            self.process.stdin.flush()
             
-            while True:
-                line = self.process.stdout.readline().strip()
-                if line.endswith('.wav'):
-                    return line
+            # Line C: Build the command string using the working shell command.
+            # This command pipes the text to piper.exe with the required model, config, and output file.
+            command = (
+                f'echo "{text}" | {str(Path("piper/piper.exe"))} '
+                f'--model {str(Path("piper/en_US-hfc_female-medium.onnx"))} '
+                f'--config {str(Path("piper/en_US-hfc_female-medium.onnx.json"))} '
+                f'--output-file {output_file}'
+            )
+            
+            # Line D: Execute the command asynchronously in a subprocess shell.
+            process = await asyncio.create_subprocess_shell(
+                command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            # Line E: Wait for the process to complete and capture its output.
+            stdout, stderr = await process.communicate()
+            
+            # Line F: Check if the process executed successfully.
+            if process.returncode != 0:
+                print("Error generating speech:", stderr.decode())
+                return None
+            else:
+                print("Generated audio file:", output_file)
+                rel_path = Path(output_file).relative_to("static")
+                return str(rel_path).replace("\\", "/") 
         except Exception as e:
-            print('Piper error:', e)
+            print("Piper error:", e)
             return None
+
 
 class AudioProcessor:
     @staticmethod
@@ -903,7 +927,8 @@ def main():
                 # Generate TTS
                 audio_file = asyncio.run(st.session_state.chat_client.generate_tts(full_response))
                 if audio_file:
-                    st.audio(audio_file, format='audio/wav')
+                   with open(audio_file, "rb") as f:
+                        st.audio(f.read(), format="audio/wav")
                 
             except Exception as e:
                 st.error("Gomenasai! Something went wrong... (╥﹏╥)")
